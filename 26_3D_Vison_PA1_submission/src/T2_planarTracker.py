@@ -1,0 +1,237 @@
+import numpy as np
+import cv2
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from core_geometry import computeH_ransac
+from feature_frontend import matchPicsORB
+
+class PlanarTracker:
+    def __init__(self, initial_corners):
+        self.initial_corners = initial_corners
+        self.corners_homo = np.hstack((initial_corners, np.ones((4, 1))))
+        self.H_accum = np.eye(3)
+        self.errors = []
+
+    def update_accum(self, H_step):
+        """
+        TODO: Update self.H_accum using the incremental homography H_step.
+        Formula: H_accum_new = H_step @ H_accum_old
+        """
+        if H_step is not None:
+            self.H_accum = np.asarray(H_step, dtype=np.float64) @ self.H_accum
+            if abs(self.H_accum[2, 2]) > 1e-12:
+                self.H_accum /= self.H_accum[2, 2]
+            return True
+        return False
+
+    def get_projected_corners(self, H):
+        """
+        TODO: Project initial_corners using homography H.
+        1. Perform matrix multiplication: projected = H @ corners_homo
+        2. Normalize by dividing by the 3rd component (w).
+        """
+        if H is None: return None
+        projected = (np.asarray(H, dtype=np.float64) @ self.corners_homo.T).T
+        w = projected[:, 2:3]
+        valid = np.abs(w[:, 0]) > 1e-12
+        if not np.all(valid):
+            return None
+        return projected[:, :2] / w
+
+    def compute_drift_error(self, H_direct):
+        """
+        TODO: Compute the Frobenius norm error between normalized H_accum and H_direct.
+        1. Normalize both H matrices such that H[2, 2] = 1.
+        2. Compute linalg norm of (H1 - H2).
+        """
+        if H_direct is None:
+            self.errors.append(np.nan)
+            return None
+        H1 = self.H_accum.copy()
+        H2 = np.asarray(H_direct, dtype=np.float64).copy()
+        if abs(H1[2, 2]) > 1e-12:
+            H1 /= H1[2, 2]
+        if abs(H2[2, 2]) > 1e-12:
+            H2 /= H2[2, 2]
+        error = float(np.linalg.norm(H1 - H2, ord='fro'))
+        self.errors.append(error)
+        return error
+
+def select_initial_corners(first_frame):
+    """
+    Mouse interface to select 4 corners in the first frame.
+    Supports resizing for high-resolution images.
+    """
+    corners = []
+    h, w = first_frame.shape[:2]
+    
+    # Calculate scale factor
+    scale = 1.0
+    if w > 1280 or h > 720:
+        scale = min(1280/w, 720/h)
+    
+    display_frame = cv2.resize(first_frame, None, fx=scale, fy=scale)
+
+    def mouse_callback(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN and len(corners) < 4:
+            # Scale coordinates back to original size
+            x_orig, y_orig = x / scale, y / scale
+            corners.append((x_orig, y_orig))
+            cv2.circle(display_frame, (x, y), 5, (0, 0, 255), -1)
+            cv2.imshow("Select 4 Corners", display_frame)
+
+    cv2.imshow("Select 4 Corners", display_frame)
+    cv2.setMouseCallback("Select 4 Corners", mouse_callback)
+    
+    print("Click 4 corners of the object (Clockwise or Counter-clockwise).")
+    print("Press any key after selecting 4 points.")
+    cv2.waitKey(0)
+    cv2.destroyWindow("Select 4 Corners")
+    
+    if len(corners) != 4:
+        return None
+    return np.array(corners, dtype=np.float32)
+
+def run_planar_tracker(video_path, initial_corners=None):
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"Error: Cannot open video {video_path}")
+        return
+
+    ret, ref_frame = cap.read()
+    if not ret: return
+
+    if initial_corners is None:
+        initial_corners = select_initial_corners(ref_frame)
+        if initial_corners is None: return
+
+    tracker = PlanarTracker(initial_corners)
+    prev_frame = ref_frame.copy()
+    frame_idx = 0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    target_indices = sorted(set([1, max(1, total_frames // 2), max(1, total_frames - 1)])) if total_frames > 1 else [1]
+    snapshots = {}
+
+    while True:
+        ret, curr_frame = cap.read()
+        if not ret: break
+
+        frame_idx += 1
+        H_direct = None
+
+        matches_step, locs_prev, locs_curr = matchPicsORB(prev_frame, curr_frame)
+        if len(matches_step) >= 4:
+            matched_prev = locs_prev[matches_step[:, 0]]
+            matched_curr = locs_curr[matches_step[:, 1]]
+            H_step, _ = computeH_ransac(matched_prev, matched_curr, max_iter=120, threshold=3.0)
+            tracker.update_accum(H_step)
+
+        matches_ref, locs_ref, locs_curr_ref = matchPicsORB(ref_frame, curr_frame)
+        if len(matches_ref) >= 4:
+            matched_ref = locs_ref[matches_ref[:, 0]]
+            matched_curr_ref = locs_curr_ref[matches_ref[:, 1]]
+            H_direct, _ = computeH_ransac(matched_ref, matched_curr_ref, max_iter=180, threshold=3.0)
+
+        tracker.compute_drift_error(H_direct)
+
+        display_frame = curr_frame.copy()
+
+        win_video = "Planar Tracking: Video"
+        win_plot = "Drift Error Plot"
+
+        h_orig, w_orig = display_frame.shape[:2]
+        scale = 1.0
+        if w_orig > 1280 or h_orig > 720:
+            scale = min(1280/w_orig, 720/h_orig)
+            display_frame = cv2.resize(display_frame, None, fx=scale, fy=scale)
+
+        corners_accum = tracker.get_projected_corners(tracker.H_accum)
+        if corners_accum is not None:
+            cv2.polylines(display_frame, [(corners_accum * scale).astype(np.int32)], True, (255, 255, 0), 2)
+
+        corners_direct = tracker.get_projected_corners(H_direct)
+        if corners_direct is not None:
+            cv2.polylines(display_frame, [(corners_direct * scale).astype(np.int32)], True, (255, 0, 255), 2)
+
+        cv2.putText(display_frame, f"Frame: {frame_idx}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(display_frame, "CYAN: Accumulated", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+        cv2.putText(display_frame, "MAGENTA: Direct", (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
+
+        fig = plt.figure(figsize=(5, 4), dpi=100)
+        plt.plot(tracker.errors, color='blue', label='Drift Error')
+        plt.title("Numerical Error Analysis")
+        plt.xlabel("Frame")
+        plt.ylabel("Frobenius Norm")
+        plt.grid(True)
+
+        fig.canvas.draw()
+        plot_img = np.asarray(fig.canvas.buffer_rgba())
+        plot_img = cv2.cvtColor(plot_img, cv2.COLOR_RGBA2BGR)
+        plt.close(fig) 
+
+        if frame_idx == 1:
+            cv2.namedWindow(win_video)
+            cv2.namedWindow(win_plot)
+            try:
+                import tkinter as tk
+                root = tk.Tk()
+                sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+                root.destroy()
+                
+                v_w, v_h = display_frame.shape[1], display_frame.shape[0]
+                p_w, p_h = plot_img.shape[1], plot_img.shape[0]
+                gap = 20
+                total_w = v_w + p_w + gap
+                
+                start_x = (sw - total_w) // 2
+                start_y = (sh - max(v_h, p_h)) // 2
+                
+                cv2.moveWindow(win_video, start_x, start_y)
+                cv2.moveWindow(win_plot, start_x + v_w + gap, start_y)
+            except:
+                pass
+
+        cv2.imshow(win_video, display_frame)
+        cv2.imshow(win_plot, plot_img)
+
+        if frame_idx in target_indices:
+            snapshots[frame_idx] = display_frame.copy()
+
+        if cv2.waitKey(10) & 0xFF == 27:
+            break
+
+        prev_frame = curr_frame.copy()
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+    import os
+    if not os.path.exists('../result'):
+        os.makedirs('../result')
+
+    if len(tracker.errors) > 0:
+        plt.figure(figsize=(8, 4.5))
+        plt.plot(np.arange(1, len(tracker.errors) + 1), tracker.errors, linewidth=2, color='blue')
+        plt.title("Drift Error vs Frame Number")
+        plt.xlabel("Frame Number")
+        plt.ylabel("Frobenius Norm")
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig('../result/T2_drift_error_plot.png', dpi=180)
+        plt.close()
+
+    ordered_frames = [snapshots[k] for k in sorted(snapshots.keys()) if k in snapshots]
+    if ordered_frames:
+        target_h = 360
+        resized = []
+        for img in ordered_frames[:3]:
+            h, w = img.shape[:2]
+            new_w = int(round(w * target_h / h))
+            resized.append(cv2.resize(img, (new_w, target_h)))
+        panel = np.hstack(resized)
+        cv2.imwrite('../result/T2_tracking_frames.png', panel)
+
+if __name__ == '__main__':
+    video_path = '../data/planar_video.mp4' 
+    run_planar_tracker(video_path)
