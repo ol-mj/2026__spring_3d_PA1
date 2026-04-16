@@ -4,7 +4,7 @@ import argparse
 import cv2
 import numpy as np
 
-from core_geometry import computeH, computeH_norm, computeH_ransac, warpPerspective
+from core_geometry import computeH, computeH_norm, warpPerspective
 from feature_frontend import matchPicsORB
 
 
@@ -16,8 +16,9 @@ RESULT_DIR.mkdir(parents=True, exist_ok=True)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--img1", type=str, default=str(DATA_DIR / "example.jpg"))
-    parser.add_argument("--img2", type=str, default=str(DATA_DIR / "example4.jpg"))
+    parser.add_argument("--img1", type=str, default=str(DATA_DIR / "test_on_copy1.jpg"))
+    parser.add_argument("--img2", type=str, default=str(DATA_DIR / "test_on_copy2.jpg"))
+    parser.add_argument("--num_matches", type=int, default=12)
     args = parser.parse_args()
 
     print("=== Task 1-3: Normalized Homography Comparison ===")
@@ -32,17 +33,9 @@ if __name__ == "__main__":
     if len(matches) < 4:
         raise RuntimeError("Not enough matches to estimate a homography.")
 
-    p1_all = locs1[matches[:, 0]]
-    p2_all = locs2[matches[:, 1]]
-
-    # For automatic ORB matches, first isolate a clean inlier set.
-    # Then compare plain DLT vs normalized DLT on exactly the same correspondences.
-    _, inliers = computeH_ransac(p1_all, p2_all, max_iter=300, threshold=3.0, rng=np.random.default_rng(2026))
-    if np.sum(inliers) < 4:
-        raise RuntimeError("Could not find enough inliers for a stable comparison.")
-
-    p1 = p1_all[inliers]
-    p2 = p2_all[inliers]
+    used = matches[: max(4, min(args.num_matches, len(matches)))]
+    p1 = locs1[used[:, 0]]
+    p2 = locs2[used[:, 1]]
 
     H_basic = computeH(p1, p2)
     H_norm = computeH_norm(p1, p2)
@@ -57,10 +50,11 @@ if __name__ == "__main__":
     res_norm = img_scene.copy()
     res_norm[mask_norm > 0] = img_warped_norm[mask_norm > 0]
 
-    cv2.putText(res_basic, "Basic DLT (same inliers)", (20, 45), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 3)
+    cv2.putText(res_basic, "Basic DLT", (20, 45), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 3)
     cv2.putText(res_norm, "Normalized DLT", (20, 45), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 0), 3)
 
     comparison_res = np.hstack([res_basic, res_norm])
     out_path = RESULT_DIR / "T1-3_comparison.png"
     cv2.imwrite(str(out_path), comparison_res)
+    print(f"Compared basic vs normalized DLT using the same top {len(used)} ORB matches.")
     print(f"Saved: {out_path}")

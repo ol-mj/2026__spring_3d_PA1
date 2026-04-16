@@ -20,8 +20,8 @@ USER_NAME = "Minjae"
 if __name__ == "__main__":
     print("=== Task 1-4: RANSAC for Robust Homography & Analysis ===")
 
-    img_template = cv2.imread(str(DATA_DIR / "cv_cover.jpg"))
-    img_scene = cv2.imread(str(DATA_DIR / "cv_desk.png"))
+    img_template = cv2.imread(str(DATA_DIR / "test_on_copy1.jpg"))
+    img_scene = cv2.imread(str(DATA_DIR / "test_on_copy2.jpg"))
 
     if img_template is None or img_scene is None:
         raise FileNotFoundError("Could not load cv_cover.jpg or cv_desk.png from ../data")
@@ -56,7 +56,7 @@ if __name__ == "__main__":
     plt.close()
     print(f"Saved: {plot_path}")
 
-    H_best, inliers = computeH_ransac(p1, p2, max_iter=240, threshold=3.0, rng=np.random.default_rng(2026))
+    H_best, inliers = computeH_ransac(p1, p2, max_iter=800, threshold=3.0, rng=np.random.default_rng(2026))
     print(f"Final inlier count: {int(np.sum(inliers))} / {len(inliers)}")
 
     out_size = (img_scene.shape[1], img_scene.shape[0])

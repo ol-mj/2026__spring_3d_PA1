@@ -1,5 +1,6 @@
 
 from pathlib import Path
+import argparse
 import numpy as np
 import cv2
 import matplotlib
@@ -42,8 +43,13 @@ def draw_matches(im1, im2, matches, locs1, locs2):
 
 
 if __name__ == "__main__":
-    img_template = cv2.imread(str(DATA_DIR / "cv_cover.jpg"))
-    img_scene = cv2.imread(str(DATA_DIR / "cv_desk.png"))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--img1", type=str, default=str(DATA_DIR / "test_cv.jpg"))
+    parser.add_argument("--img2", type=str, default=str(DATA_DIR / "test_book2.jpg"))
+    args = parser.parse_args()
+
+    img_template = cv2.imread(args.img1)
+    img_scene = cv2.imread(args.img2)
 
     if img_template is None or img_scene is None:
         raise FileNotFoundError("Could not load cv_cover.jpg or cv_desk.png from ../data")
@@ -52,7 +58,7 @@ if __name__ == "__main__":
     print(f"[Result] Number of matches: {len(matches)}")
 
     fig = draw_matches(img_template, img_scene, matches, locs1, locs2)
-    out_path = RESULT_DIR / "T1-1_matches.png"
+    out_path = RESULT_DIR / "T1-1_matches_test_on_copy.png"
     fig.savefig(out_path, dpi=180, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {out_path}")

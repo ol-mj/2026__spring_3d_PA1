@@ -26,7 +26,7 @@ def _normalize_points(x):
     shifted = x - centroid
     dist = np.sqrt(np.sum(shifted ** 2, axis=1))
     mean_dist = np.mean(dist)
-    scale = 1.0 if mean_dist < 1e-12 else np.sqrt(2.0) / mean_dist
+    scale = 1.0 if mean_dist < 1e-12 else 2.0 / mean_dist
     T = np.array([
         [scale, 0.0, -scale * centroid[0]],
         [0.0, scale, -scale * centroid[1]],
@@ -137,7 +137,7 @@ def computeH_norm(x1, x2):
     return _normalize_h(H)
 
 
-def computeH_ransac(locs1, locs2, max_iter=200, threshold=3.0, rng=None):
+def computeH_ransac(locs1, locs2, max_iter=500, threshold=3.0, rng=None):
     """
     Robust homography estimation with RANSAC.
     """
